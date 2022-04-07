@@ -1,46 +1,63 @@
 'use strict';
 
+const fs = require('node:fs');
+
 const SEQID_DB_PATH = 'test.db';
+const seqid = require('..').connect({path: SEQID_DB_PATH});
 
-const fs    = require('fs');
-const seqid = require('../src').connect({path: SEQID_DB_PATH});
-
-afterAll(() => fs.unlinkSync(SEQID_DB_PATH));
-
-describe('Serial', () => {
-	test('Empty namespace', async () => {
-		expect(await seqid()).toStrictEqual({namespace: '', id: 1});
-		expect(await seqid()).toStrictEqual({namespace: '', id: 2});
-		expect(await seqid()).toStrictEqual({namespace: '', id: 3});
-	});
-	
-	test('Trim namespace', async () => {
-		expect(await seqid('trimmed'))      .toStrictEqual({namespace: 'trimmed', id: 1});
-		expect(await seqid('   trimmed'))   .toStrictEqual({namespace: 'trimmed', id: 2});
-		expect(await seqid('trimmed   '))   .toStrictEqual({namespace: 'trimmed', id: 3});
-		expect(await seqid('   trimmed   ')).toStrictEqual({namespace: 'trimmed', id: 4});
-	});
+afterAll(() => {
+	seqid.close();
+	fs.unlinkSync(SEQID_DB_PATH);
 });
 
-describe('Parallel', () => {
-	test('1000 promises (1 thread)', async () => {
-		const NUMBER = 1_000;
+describe('Serial', () => {
+	test('Empty namespace', () => {
+		expect(seqid.getLastId()).toBeUndefined();
 		
-		const ids = new Set();
+		expect(seqid.generate()).toBe(1);
+		expect(seqid.generate()).toBe(2);
+		expect(seqid.generate()).toBe(3);
 		
-		await Promise.all(Array(NUMBER).fill(undefined).map(() => seqid('1 thread')
-			.then(({id}) => ids.add(id))));
+		expect(seqid.getLastId()).toBe(3);
+	});
+	
+	test('Initialize namespace', () => {
+		const NS = 'initialized';
 		
-		expect(ids.size).toBe(NUMBER);
+		expect(seqid.getLastId(NS)).toBeUndefined();
+		
+		expect(() => seqid.setLastId(NS, 0.5)).toThrow(new TypeError('id must be integer'));
+		seqid.setLastId(NS, 42);
+		expect(seqid.getLastId(NS)).toBe(42);
+		
+		expect(seqid.generate(NS)).toBe(43);
+		expect(seqid.generate(NS)).toBe(44);
+	});
+	
+	test('Trim namespace', () => {
+		expect(seqid.generate('trimmed'))      .toBe(1);
+		expect(seqid.generate('   trimmed'))   .toBe(2);
+		expect(seqid.generate('trimmed   '))   .toBe(3);
+		expect(seqid.generate('   trimmed   ')).toBe(4);
 	});
 });
 
 describe('Instance', () => {
-	test('Create', async () => {
-		const generator = seqid.create('instance');
+	test('Create', () => {
+		const NS = 'instance';
 		
-		expect(await generator()).toStrictEqual({namespace: 'instance', id: 1});
-		expect(await generator()).toStrictEqual({namespace: 'instance', id: 2});
-		expect(await generator()).toStrictEqual({namespace: 'instance', id: 3});
+		const instance = seqid.create(NS);
+		expect(instance.namespace).toBe(NS);
+		
+		expect(instance.getLastId()).toBeUndefined();
+		
+		expect(instance.generate()).toBe(1);
+		expect(instance.generate()).toBe(2);
+		expect(instance.generate()).toBe(3);
+		
+		instance.setLastId(42);
+		expect(instance.getLastId()).toBe(42);
+		
+		expect(instance.generate()).toBe(43);
 	});
 });

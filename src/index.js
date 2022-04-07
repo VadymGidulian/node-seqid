@@ -1,63 +1,70 @@
 'use strict';
 
-const sqlite3 = require('sqlite3');
+const Sqlite3 = require('better-sqlite3');
 
 function connect({path = 'seqid.db'} = {}) {
-	const db = new sqlite3.Database(path);
+	const db = new Sqlite3(path);
+	if (db.pragma('journal_mode = WAL')?.[0]?.journal_mode !== 'wal') console.warn('SQLite journaling mode hasn\'t been set to WAL');
+	db.pragma('synchronous = NORMAL');
 	
-	db.serialize();
+	db.exec(
+		`CREATE TABLE IF NOT EXISTS Ids (
+			namespace TEXT,
+			id        INTEGER,
+			PRIMARY KEY (namespace)
+		)`
+	);
 	
-	db.run(`CREATE TABLE IF NOT EXISTS Ids (
-	    namespace TEXT,
-	    id        INTEGER,
-	    PRIMARY KEY (namespace)
-	)`);
+	const stmt = db.prepare(
+		`INSERT INTO Ids(namespace, id) VALUES ($namespace, 1)
+		ON CONFLICT(namespace) DO UPDATE SET id = id + 1
+		RETURNING id`
+	).pluck();
 	
-	let busy = false;
-	async function generate(namespace) {
-		namespace = ((namespace != null) ? String(namespace) : '').trim();
+	function generate(namespace) {
+		namespace = (namespace != null) ? String(namespace).trim() : '';
 		
-		if (!busy) busy = true;
-		else await new Promise(resolve => {
-			const handler = setInterval(() => {
-				if (!busy) {
-					busy = true;
-					clearInterval(handler);
-					resolve();
-				}
-			});
-		});
-		
-		try {
-			await new Promise((resolve, reject) => db.run(
-				'INSERT INTO Ids(namespace, id) VALUES ($namespace, 1) ' +
-				'ON CONFLICT(namespace) DO UPDATE SET id = id + 1',
-				{$namespace: namespace},
-				err => {
-					if (err) return reject(err);
-					
-					resolve();
-				}
-			));
-			return await new Promise((resolve, reject) => db.get(
-				'SELECT namespace, id FROM Ids WHERE namespace = $namespace',
-				{$namespace: namespace},
-				(err, {namespace, id}) => {
-					if (err) return reject(err);
-					
-					resolve({namespace, id});
-				}
-			));
-		} finally {
-			busy = false;
-		}
-		
-	}
-	generate.create = function (namespace) {
-		return () => generate(namespace);
+		return stmt.get({namespace});
 	}
 	
-	return generate;
+	function getLastId(namespace) {
+		namespace = (namespace != null) ? String(namespace).trim() : '';
+		
+		return db.prepare(
+			`SELECT id
+			FROM Ids
+			WHERE namespace = $namespace`
+		).pluck().get({namespace});
+	}
+	
+	function setLastId(namespace, id) {
+		namespace = (namespace != null) ? String(namespace).trim() : '';
+		if (!Number.isInteger(id)) throw new TypeError('id must be integer');
+		
+		db.prepare(
+			`INSERT INTO Ids(namespace, id) VALUES ($namespace, $id)
+			ON CONFLICT(namespace) DO UPDATE SET id = $id`
+		).run({namespace, id});
+	}
+	
+	function create(namespace) {
+		namespace = (namespace != null) ? String(namespace).trim() : '';
+		
+		return {
+			get namespace() {
+				return namespace;
+			},
+			generate:  () => generate(namespace),
+			getLastId: () => getLastId(namespace),
+			setLastId: id => setLastId(namespace, id)
+		};
+	}
+	
+	function close() {
+		db.close();
+	}
+	
+	return {close, create, generate, getLastId, setLastId};
 }
 
 module.exports = {connect};

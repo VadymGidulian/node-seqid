@@ -19,9 +19,19 @@ const seqid = require('@vadym.gidulian/seqid').connect({
 	path: 'seqid.db' // default
 });
 
-await seqid();           // {namespace: '',         id: 1}
-await seqid('products'); // {namespace: 'products', id: 1}
+seqid.generate();           // 1
+seqid.generate('products'); // 1
+
+seqid.setLastId('products', 42);
+seqid.generate('products');  // 43
+seqid.getLastId('products'); // 43
 
 const productIdGenerator = seqid.create('products');
-await productIdGenerator(); // {namespace: 'products', id: 2}
+productIdGenerator.namespace;  // 'products'
+productIdGenerator.generate(); // 44
+
+productIdGenerator.setLastId(0);
+productIdGenerator.generate(); // 1
+
+seqid.close();
 ```
